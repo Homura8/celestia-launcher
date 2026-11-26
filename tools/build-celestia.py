@@ -77,7 +77,7 @@ def setup(args):
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         fail("v0.1 builds on native Apple Silicon macOS only (not Rosetta).")
     env = os.environ.copy()
-    env["PATH"] = str(Path.home() / ".cargo/bin") + ":/opt/homebrew/bin:/opt/homebrew/opt/rustup/bin:" + env.get("PATH", "")
+    env["PATH"] = env.get("PATH", "") + ":/opt/homebrew/bin:/opt/homebrew/opt/rustup/bin:" + str(Path.home() / ".cargo/bin")
     for tool in ("git", "rustup", "codesign", "plutil", "xcrun", "ditto"):
         if not shutil.which(tool, path=env["PATH"]):
             fail("Missing " + tool + ". Install rustup (brew install rustup) and Xcode first.")
@@ -93,6 +93,13 @@ def setup(args):
     server = Path(args.server_jar).expanduser().resolve()
     print("Xcode:", env["DEVELOPER_DIR"], "\nJava:", env["JAVA_HOME"],
           "\nRust pin:", pin, "\nMinecraft:", game_version, "\nPrism:", prism, flush=True)
+    native_cargo = shutil.which("cargo", path=env["PATH"])
+    if args.reuse_existing:
+        if not native_cargo:
+            fail("No existing Cargo found on PATH.")
+        run([native_cargo, "--version"], env)
+        run(["rustc", "--version"], env)
+    print("Server JAR:", server if server.is_file() else "(cached/Prism fallback)", flush=True)
     if args.check:
         return
     if run(["git", "status", "--porcelain", "--untracked-files=no"], capture=True).stdout.strip():
@@ -131,17 +138,27 @@ def setup(args):
     # Install the exact compiler and wasm components locally; no global rustup default change.
     run(["rustup", "toolchain", "install", pin, "--profile", "minimal",
          "--component", "rust-src", "--target", "wasm32-unknown-unknown"], env)
-    rust_bin = Path(run(["rustup", "which", "--toolchain", pin, "cargo"], env, capture=True).stdout.strip()).parent
-    env["PATH"] = str(rust_bin) + ":" + env["PATH"]
-    env["RUSTUP_TOOLCHAIN"] = pin
+    if args.reuse_existing:
+        # Keep the native compiler that populated these caches. The WASM helper
+        # independently selects the pinned compiler through rustup.
+        cargo = Path(native_cargo)
+    else:
+        rust_bin = Path(run(["rustup", "which", "--toolchain", pin, "cargo"], env, capture=True).stdout.strip()).parent
+        env["PATH"] = str(rust_bin) + ":" + env["PATH"]
+        env["RUSTUP_TOOLCHAIN"] = pin
+        for key in ("RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"):
+            env.pop(key, None)
+        cargo = rust_bin / "cargo"
     engine_env = dict(env, CARGO_TARGET_DIR=str(engine_target))
     launcher_env = dict(env, CARGO_TARGET_DIR=str(launcher_target))
-    cargo = rust_bin / "cargo"
     release = engine_target / "release"
-    run([cargo, "build", "--locked", "--release", "-p", "horizon-game",
-         "-p", "horizon-client-lib", "-p", "horizon-prepare", "-p", "horizon-server",
-         "--bin", "horizon-client", "--bin", "horizon-ctl", "--bin", "horizon-prepare",
-         "--bin", "horizon-server"], engine_env)
+    for package, binary in (("horizon-game", "horizon-client"),
+                            ("horizon-client-lib", "horizon-ctl"),
+                            ("horizon-prepare", "horizon-prepare"),
+                            ("horizon-server", "horizon-server")):
+        run([cargo, "build", "--locked", "--release", "-p", package, "--bin", binary], engine_env)
+        if not (release / binary).is_file():
+            fail("Cargo did not produce " + binary)
     run([cargo, "run", "--locked", "-p", "cargo-horizon-mod", "--", "wasm-std",
          release / "horizon-wasm-std.wasm"], engine_env)
     prep = release / "horizon-prepare"
@@ -206,8 +223,8 @@ def setup(args):
     run([launcher, "settings", "install-new-versions", "off"], engine_env)
     run([launcher, "settings", "prune-old-versions", "off"], engine_env)
     run([launcher, "settings", "selected-version", tag], engine_env)
-    if not (BASE / "client-id").exists() and not (BASE / "developer-mode").exists():
-        (BASE / "developer-mode").touch()
+    if not (BASE / APP_NAME).exists() and not (BASE / "client-id").exists():
+        (BASE / "developer-mode").touch(exist_ok=True)
     package_app(launcher, env)
     print("\nReady:", BASE / APP_NAME, "\nOpen this app in Finder or run:\n  open \"" +
           str(BASE / APP_NAME) + "\"", flush=True)
