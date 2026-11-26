@@ -47,3 +47,6 @@
 
 # Crowdin's export, read by tools/crowdin_import.py: the lang files are the copy that ships.
 /l10n/
+
+# Celestia local builds, game resources, settings and app registration configuration.
+/.celestia/

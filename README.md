@@ -47,6 +47,17 @@ The instructions below are for the current macOS development checkout, not a fin
 - Xcode with the Metal compiler available (`xcrun -sdk macosx metal --version`). The standalone Command Line Tools may not be sufficient for building the GUI.
 - Your own installation of Minecraft: Java Edition 26.3 and the matching server JAR from Mojang.
 
+### Celestia v0.1 build
+
+A local macOS build entry point is now available:
+
+```sh
+./Build.command --check
+./Build.command
+```
+
+For an existing checkout, `./Build.command --reuse-existing` reuses the previous Cargo build directories. See the [v0.1 build guide](docs/celestia-build.md) for prerequisites, configuration, output and limitations. This is a development build, not a public release.
+
 ### Native client
 
 ```sh

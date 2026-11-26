@@ -52,7 +52,50 @@ pub(super) fn add_fonts(cx: &mut App) {
         .expect("bundled fonts");
 }
 
+// The locally packaged Celestia app keeps its instance data beside the app.
+// A bare executable retains the original developer/CLI behavior.
+#[cfg(target_os = "macos")]
+fn celestia_environment() {
+    use std::{env, fs, path::Path};
+    fn app_root(exe: &Path) -> Option<&Path> {
+        let macos = exe.parent()?;
+        let contents = macos.parent()?;
+        let app = contents.parent()?;
+        if macos.file_name()?.to_str()? != "MacOS"
+            || contents.file_name()?.to_str()? != "Contents"
+            || app.file_name()?.to_str()? != "Celestia Launcher.app"
+        {
+            return None;
+        }
+        app.parent()
+    }
+
+    let Ok(exe) = env::current_exe() else { return };
+    let Some(base) = app_root(&exe) else { return };
+    let data = base.join("data");
+    if !data.join("launcher").is_dir() || !data.join("game").is_dir() {
+        eprintln!("Celestia Launcher must stay beside its data directory. Move the enclosing folder, not the app alone.");
+        std::process::exit(1);
+    }
+    // Called before the launcher starts any worker threads.
+    env::set_var("HORIZON_LAUNCHER_HOME", data.join("launcher"));
+    env::set_var("HORIZON_HOME", data.join("game"));
+    env::set_var("HORIZON_LAUNCHER_LOCATION_FILE", data.join("location.json"));
+    env::set_var("HORIZON_LAUNCHER_NO_SELF_UPDATE", "1");
+    env::set_var("HORIZON_TELEMETRY_URL", "off");
+    // Always override a built-in ID, even when the local configuration is absent.
+    let id = fs::read_to_string(base.join("client-id")).unwrap_or_default();
+    env::set_var("HORIZON_MSA_CLIENT_ID", id.trim());
+    if base.join("developer-mode").is_file() {
+        env::set_var("HORIZON_LAUNCHER_DEVELOPER_OFFLINE", "1");
+    } else {
+        env::remove_var("HORIZON_LAUNCHER_DEVELOPER_OFFLINE");
+    }
+}
+
 fn run_launcher() {
+    #[cfg(target_os = "macos")]
+    celestia_environment();
     // First, before any other thread reads the environment.
     horizon_launcher::update_handoff::take_min_restarted_env();
     horizon_platform::mod_package::holder::retain_capability();
