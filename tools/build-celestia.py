@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build and install a local Celestia development bundle on Apple Silicon."""
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -99,12 +100,17 @@ def setup(args):
              "the engine packager snapshots the committed checkout.")
     for path in (BASE, BASE / "build", BASE / "data", BASE / "data/launcher", BASE / "data/game"):
         require_directory(path)
+    lock = (BASE / "build.lock").open("a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fail("Another Celestia build is running.")
     env["HORIZON_LAUNCHER_HOME"] = str(BASE / "data/launcher")
     env["HORIZON_HOME"] = str(BASE / "data/game")
     env["HORIZON_LAUNCHER_LOCATION_FILE"] = str(BASE / "data/location.json")
     env["HORIZON_LAUNCHER_NO_SELF_UPDATE"] = "1"
     env["HORIZON_TELEMETRY_URL"] = "off"
-    env.pop("HORIZON_MSA_CLIENT_ID", None)
+    env["HORIZON_MSA_CLIENT_ID"] = ""
     # Keep the default build caches private to this checkout. Existing local builds
     # can be reused explicitly, without deleting or moving them.
     if not args.reuse_existing:
@@ -200,29 +206,11 @@ def setup(args):
     run([launcher, "settings", "install-new-versions", "off"], engine_env)
     run([launcher, "settings", "prune-old-versions", "off"], engine_env)
     run([launcher, "settings", "selected-version", tag], engine_env)
+    if not (BASE / "client-id").exists() and not (BASE / "developer-mode").exists():
+        (BASE / "developer-mode").touch()
     package_app(launcher, env)
     print("\nReady:", BASE / APP_NAME, "\nOpen this app in Finder or run:\n  open \"" +
           str(BASE / APP_NAME) + "\"", flush=True)
-
-WRAPPER = """#!/bin/bash
-set -e
-HERE="$(cd "$(dirname "$0")" && pwd -P)"
-BASE="$(cd "$HERE/../../.." && pwd -P)"
-export HORIZON_LAUNCHER_HOME="$BASE/data/launcher"
-export HORIZON_HOME="$BASE/data/game"
-export HORIZON_LAUNCHER_LOCATION_FILE="$BASE/data/location.json"
-export HORIZON_LAUNCHER_NO_SELF_UPDATE=1
-export HORIZON_TELEMETRY_URL=off
-unset HORIZON_MSA_CLIENT_ID HORIZON_LAUNCHER_DEVELOPER_OFFLINE
-if [ -s "$BASE/client-id" ]; then
-    HORIZON_MSA_CLIENT_ID="$(cat "$BASE/client-id")"
-    export HORIZON_MSA_CLIENT_ID
-fi
-if [ -f "$BASE/developer-mode" ]; then
-    export HORIZON_LAUNCHER_DEVELOPER_OFFLINE=1
-fi
-exec "$HERE/horizon-launcher" "$@"
-"""
 
 def package_app(launcher, env):
     # Adapt the original macOS release plist and icon, without requiring dmgbuild
@@ -234,21 +222,17 @@ def package_app(launcher, env):
         macos.mkdir(parents=True)
         resources.mkdir()
         shutil.copy2(launcher, macos / "horizon-launcher")
-        wrapper = macos / "celestia-launcher"
-        wrapper.write_text(WRAPPER)
-        wrapper.chmod(0o755)
         shutil.copy2(ROOT / "packaging/icons/horizon.icns", resources / "horizon.icns")
         with (ROOT / "packaging/macos/Info.plist").open("rb") as f:
             plist = plistlib.load(f)
         plist.update(CFBundleDisplayName="Celestia Launcher",
-                     CFBundleName="Celestia Launcher", CFBundleExecutable="celestia-launcher",
+                     CFBundleName="Celestia Launcher", CFBundleExecutable="horizon-launcher",
                      CFBundleIdentifier="io.github.homura8.celestia-launcher",
                      CFBundleShortVersionString=VERSION, CFBundleVersion=VERSION)
         with (app / "Contents/Info.plist").open("wb") as f:
             plistlib.dump(plist, f)
         (app / "Contents/PkgInfo").write_text("APPL????")
         run(["plutil", "-lint", app / "Contents/Info.plist"], env)
-        run(["codesign", "--force", "--sign", "-", macos / "horizon-launcher"], env)
         run(["codesign", "--force", "--sign", "-", app], env)
         run(["codesign", "--verify", "--deep", "--strict", app], env)
         # Preserve the previous app until the new one is verified.
@@ -260,17 +244,13 @@ def package_app(launcher, env):
             final.rename(old)
         try:
             app.rename(final)
-            run([final / "Contents/MacOS/celestia-launcher", "--version"], env)
+            run([final / "Contents/MacOS/horizon-launcher", "--version"], env)
         except BaseException:
             if final.exists():
                 shutil.rmtree(final)
             if old.exists():
                 old.rename(final)
             raise
-    # Default to the upstream's explicit local single-player development mode
-    # until the owner opts into real Microsoft authentication.
-    if not (BASE / "client-id").exists() and not (BASE / "developer-mode").exists():
-        (BASE / "developer-mode").touch()
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
