@@ -10,6 +10,11 @@ provide the latter three. Run Minecraft 26.3 in Prism once and have the matching
 Mojang server JAR available. Close running Horizon/Celestia games and launchers before
 building. Commit or stash any tracked edits first.
 
+If the repository was originally cloned with --depth 1, explicitly fetch the branch:
+
+    git fetch origin refs/heads/celestia/v0.1:refs/remotes/origin/celestia/v0.1
+    git switch --track origin/celestia/v0.1
+
 From the repository:
 
     ./Build.command --check
@@ -19,6 +24,9 @@ Or double-click Build.command in Finder. For an existing checkout like the origi
 development Mac, reuse the Cargo targets and normal Rust caches:
 
     ./Build.command --reuse-existing
+
+This retains the native Cargo already on PATH. The WASM tool still uses the exact
+upstream Rust pin through rustup.
 
 Override paths if needed:
 
