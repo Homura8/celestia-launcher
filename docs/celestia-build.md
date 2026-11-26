@@ -12,7 +12,8 @@ building. Commit or stash any tracked edits first.
 
 If the repository was originally cloned with --depth 1, explicitly fetch the branch:
 
-    git fetch origin refs/heads/celestia/v0.1:refs/remotes/origin/celestia/v0.1
+    git remote set-branches --add origin celestia/v0.1
+    git fetch origin
     git switch --track origin/celestia/v0.1
 
 From the repository:
